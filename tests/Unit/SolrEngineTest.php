@@ -73,22 +73,24 @@ class SolrEngineTest extends EngineTestCase
     {
         $this->engine->update(new Collection([new TestModel(['id' => 7, 'title' => 'A & B']), new TestModel()]));
         $request = $this->adapter->requests[0]['request'];
-        $xml = simplexml_load_string($request->getRawData());
-        self::assertSame('7', (string) $xml->add->doc->field[0]);
-        self::assertSame('A & B', (string) $xml->add->doc->field[1]);
-        self::assertSame(TestModel::class, (string) $xml->add->doc->field[2]);
-        self::assertCount(1, $xml->add->doc);
-        self::assertNotNull($xml->commit);
+        // Solarium 7 serializes update requests as JSON by default.
+        $payload = json_decode($request->getRawData(), true);
+        $doc = $payload['add']['doc'];
+        self::assertSame(7, $doc['id']);
+        self::assertSame('A & B', $doc['title']);
+        self::assertSame(TestModel::class, $doc['_modelClass']);
+        self::assertArrayNotHasKey('meta', $doc);
+        self::assertArrayHasKey('commit', $payload);
         self::assertSame('books', $this->adapter->requests[0]['endpoint']->getKey());
     }
 
     public function test_delete_serializes_ids_and_commit(): void
     {
         $this->engine->delete(new Collection([new TestModel(['id' => 7]), new TestModel(['id' => 8])]));
-        $xml = simplexml_load_string($this->adapter->requests[0]['request']->getRawData());
-        self::assertSame('7', (string) $xml->delete->id[0]);
-        self::assertSame('8', (string) $xml->delete->id[1]);
-        self::assertNotNull($xml->commit);
+        // Solarium 7 serializes update requests as JSON by default.
+        $payload = json_decode($this->adapter->requests[0]['request']->getRawData(), true);
+        self::assertSame([7, 8], $payload['delete']);
+        self::assertArrayHasKey('commit', $payload);
     }
 
     public function test_disabled_search_update_and_delete_do_not_use_transport(): void

@@ -59,6 +59,7 @@
 
   scripts.composer-deps-upgrade.exec = ''
     # Install dependencies for the upgraded codebase (PHP 8.5 / Scout 11 / Solarium 7).
+    rm -f composer.lock
     composer update --no-interaction
   '';
 

@@ -11,9 +11,6 @@ class MapStubModel extends TestModel
     public static $lastOrderByRaw;
     public static $fakeRows = [];
 
-    /** Scout 7 qualifies this as "books.id", which pluck() cannot read (issue 20). */
-    public function getScoutKeyName() { return $this->getKeyName(); }
-
     public function whereIn($column, $values, $boolean = 'and', $not = false)
     {
         return new class(self::$fakeRows) {

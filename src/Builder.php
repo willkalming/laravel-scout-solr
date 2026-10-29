@@ -105,12 +105,9 @@ class Builder extends ScoutBuilder
     public function paginate($perPage = null, $pageName = 'page', $page = null)
     {
         $paginator = parent::paginate($perPage, $pageName, $page);
-        // be paranoid and ensure we have the methods we need
-        if (
-            method_exists($paginator, 'getCollection') &&
-            array_key_exists(HasSolrResults::class, class_uses($paginator->getCollection()))
-        ) {
-            $paginator->getCollection()->setResults($this->engine()->getLastSelectResult());
+        $collection = $paginator->getCollection();
+        if ($collection instanceof SolrCollection) {
+            $collection->setResults($this->engine()->getLastSelectResult());
         }
         return $paginator;
     }
@@ -118,24 +115,29 @@ class Builder extends ScoutBuilder
     public function get()
     {
         $models = parent::get();
-        // be paranoid and ensure we have the methods we need
-        if (
-            method_exists($models, 'getCollection') &&
-            array_key_exists(HasSolrResults::class, class_uses($models->getCollection()))
-        ) {
-            $models->getCollection()->setResults($this->engine()->getLastSelectResult());
+        // Scout >= 9 returns the collection of models directly; attach the raw
+        // Solr result so facet/spellcheck accessors keep working after get().
+        if ($models instanceof SolrCollection) {
+            $models->setResults($this->engine()->getLastSelectResult());
         }
         return $models;
     }
 
     /**
-     * Add a filter query, uses the solarium placeholder syntax
+     * Add a Solr filter query using the solarium placeholder syntax, or a
+     * Scout-native field/operator/value comparison.
+     *
+     * Placeholder calls keep their stage-1 shape:
+     * `where('title:%P1%', ['foo bar'])` / `where($closure)`.
+     *
+     * Scout-native calls are detected and stored in Scout's where shape:
+     * `where('category', 'books')` and `where('price', '>', 10)`.
      *
      * @see https://solarium.readthedocs.io/en/stable/queries/query-helper/placeholders/
      *
-     * @param string|Closure $query The query string
-     * @param array $bindings Any bindings to placeholders
-     * @param string $boolean 'AND' or 'OR'
+     * @param string|Closure $query The query string, or a field name for Scout-native calls
+     * @param array|string $bindings Placeholder bindings, or a value/operator for Scout-native calls
+     * @param string $boolean 'AND' or 'OR' — carrying the value for 3-arg Scout-native calls
      *
      * @return self $this to allow for fluent queries
      */
@@ -149,14 +151,36 @@ class Builder extends ScoutBuilder
                 'queries' => $query->wheres,
                 'boolean' => $boolean,
             ];
-        } else {
-            $this->wheres[] = [
-                'type' => SolrEngine::SIMPLE_QUERY,
-                'query' => $query,
-                'bindings' => $bindings,
-                'boolean' => $boolean,
-            ];
+
+            return $this;
         }
+
+        if (is_string($query) && (! is_array($bindings) || ! in_array($boolean, ['AND', 'OR'], true))) {
+            // Scout-native shape: where('category', 'books') or where('price', '>', 10)
+            if (! in_array($boolean, ['AND', 'OR'], true)) {
+                $operator = is_scalar($bindings) && (string) $bindings !== ''
+                    ? (string) $bindings
+                    : '=';
+                $value = $boolean;
+            } else {
+                $operator = '=';
+                $value = $bindings;
+            }
+            $this->wheres[] = [
+                'field' => $query,
+                'operator' => $operator,
+                'value' => $value,
+            ];
+
+            return $this;
+        }
+
+        $this->wheres[] = [
+            'type' => SolrEngine::SIMPLE_QUERY,
+            'query' => $query,
+            'bindings' => $bindings,
+            'boolean' => $boolean,
+        ];
 
         return $this;
     }
@@ -296,6 +320,7 @@ class Builder extends ScoutBuilder
         if (
             $this->useDismax !== true &&
             $this->useExtendedDismax !== true &&
+            is_string($this->query) &&
             strpos($this->query, '*') !== false
         ) {
             $this->useEDismax();
@@ -325,7 +350,7 @@ class Builder extends ScoutBuilder
     public function getBoostsCollection()
     {
         return collect($this->boostFields)->map(function ($boost, $field): string {
-            return !empty($boost) && $boost !== 1 ? "$field^$boost" : $field;
+            return ! empty($boost) && (float) $boost !== 1.0 ? "$field^$boost" : $field;
         });
     }
 

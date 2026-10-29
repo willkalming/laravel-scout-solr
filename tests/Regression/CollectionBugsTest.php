@@ -5,33 +5,26 @@ namespace Scout\Solr\Tests\Regression;
 use PHPUnit\Framework\TestCase;
 use Scout\Solr\SolrCollection;
 use Solarium\Client;
+use Solarium\Core\Client\Adapter\Http;
 use Solarium\Core\Client\Response as SolariumResponse;
-use Solarium\QueryType\Select\Query\Query as SelectQuery;
 use Symfony\Component\EventDispatcher\EventDispatcher;
 
 /**
- * Characterization tests for currently-buggy SolrCollection behavior.
- *
- * These pin down the failures as they exist today so a future fix has an
- * explicit failure mode to change; they are kept out of the unit suite so
- * the unit suite only contains healthy-behavior coverage.
+ * Fixed-behavior tests for the SolrCollection accessor crashes that the
+ * hop-1 characterization tests had pinned.
  */
 class CollectionBugsTest extends TestCase
 {
     protected function makeClient(): Client
     {
-        return new Client(null, new EventDispatcher());
+        return new Client(new Http(), new EventDispatcher());
     }
 
     /**
-     * Bug: HasSolrResults::getFacets() unconditionally calls
-     * $facetSet->count(), but Result::getFacetSet() returns null whenever the
-     * select query that produced the result never initialized the facetset
-     * component. SolrEngine::performSearch() always initializes it, but any
-     * result created another way (a hand-built query, or a future engine
-     * path) makes getFacets() fatal instead of returning null.
+     * Issue 3 (fixed): a result whose producing query never had the facetset
+     * component returns null from getFacets() instead of fataling.
      */
-    public function testGetFacetsFatalsWhenTheResultHasNoFacetSetComponent()
+    public function testGetFacetsReturnsNullWhenTheResultHasNoFacetSetComponent()
     {
         $query = $this->makeClient()->createSelect();
         $response = new SolariumResponse(
@@ -42,15 +35,37 @@ class CollectionBugsTest extends TestCase
             ['HTTP/1.1 200 OK']
         );
         $results = $this->makeClient()->createResult($query, $response);
-
-        // preconditions: Solarium legitimately gives us a null facetset
         $this->assertNull($results->getFacetSet());
 
         $collection = new SolrCollection();
         $collection->setResults($results);
 
-        $this->expectException(\Error::class);
-        $this->expectExceptionMessageMatches('/Call to a member function count\(\) on null/');
-        $collection->getFacets();
+        $this->assertNull($collection->getFacetSet());
+        $this->assertNull($collection->getFacets());
+    }
+
+    /**
+     * Issue 3 (fixed): a collection with no results attached returns null
+     * from every accessor instead of dereferencing a never-initialized value.
+     */
+    public function testAllAccessorsReturnNullWithoutResults()
+    {
+        $collection = new SolrCollection();
+        $this->assertNull($collection->getFacetSet());
+        $this->assertNull($collection->getFacets());
+        $this->assertNull($collection->getSpellcheck());
+        $this->assertNull($collection->getSpellcheckSuggestions());
+        $this->assertNull($collection->getSpellcheckCollations());
+    }
+
+    /**
+     * Issue 12 (fixed): setting a null result explicitly (done by Builder::get()
+     * before the engine's first result exists) is still safe.
+     */
+    public function testSettingNullResultsIsSafe()
+    {
+        $collection = new SolrCollection();
+        $collection->setResults(null);
+        $this->assertNull($collection->getFacetSet());
     }
 }
