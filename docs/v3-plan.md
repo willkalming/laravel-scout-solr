@@ -33,6 +33,16 @@ Goals:
 * Regression tests pin down the bugs found during this work (see [issues](/issues.html)),
   so the upgrade hop cannot silently change behavior.
 
+Implementation notes:
+
+* The suite runs against `laravel/scout` 7.2.1 + `illuminate/*` 7.30.6 + `solarium/solarium`
+  4.2.0. This baseline matches the current Scout `Engine` contract and coexists with
+  the repo's existing Psalm 3 / Solarium 4 dependencies. The attempted Scout 9 /
+  Illuminate 9 baseline required Symfony Console 6, conflicting with Psalm 3.
+  Updating those constraints is hop 2's job.
+* All PHP/Composer/PHPUnit commands run through devenv (`devenv shell -- ...`) on PHP 8.5;
+  `error_reporting` in `phpunit.xml` suppresses E_DEPRECATED from the legacy dependencies.
+
 ## Hop 2 — PHP + Scout + Solarium upgrade (`release/v3-php-scout`) ##
 
 Targets (latest as of October 2026):
