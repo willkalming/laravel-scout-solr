@@ -27,10 +27,15 @@ Each item records where it lives, why it is a problem, and where it is fixed
    request (and then `map()`/`getTotalCount()` are fed an unexpected value). A regression
    test pins the disabled behavior; fixed in the upgrade hop.
 
-3. **`SolrEngine::map()` crashes on results without facets.**
-   `$results->getFacetSet()` returns `null` when the response contains no facet set;
-   `$facetSet->count()` then fatals. Same latent problem with `getSpellcheck()`
-   (`HasSolrResults` guards this one). Fixed by null-guarding in the upgrade hop.
+3. **`SolrCollection` result accessors fatal when no result was attached.**
+   `HasSolrResults::getFacetSet()`/`getSpellcheck()` dereference the private
+   `$results` object unconditionally, so any `SolrCollection` that never received
+   `setResults()` (e.g. everything returned by `Builder::get()`, see issue 12)
+   fatals on `getFacetSet()`. Additionally `getFacets()` calls
+   `$facetSet->count()` without a null guard, so a result *without* a facetset
+   component crashes too (only masked because `performSearch()` always
+   initializes the facetset component). Pinned by regression tests; fixed by
+   null-guarding in the upgrade hop.
 
 4. **Unknown `wheres` entries silently corrupt filter queries.**
    In `performSearch()` the wheres loop only handles the `NESTED_QUERY` and
@@ -73,7 +78,10 @@ Each item records where it lives, why it is a problem, and where it is fixed
 
 10. **`autoSpellcheckSearch()` is advertised but never implemented.**
     `Builder::autoSpellcheckSearch()` sets flags (and forces `collate`), but nothing ever
-    re-runs the search using the collation. The feature is dead code. Documented as a
+    re-runs the search using the collation. Worse, calling only
+    `autoSpellcheckSearch()` never enables the spellcheck component at all —
+    `getUseSpellcheck()` stays false, so the engine skips the component unless
+    `spellcheck()` was also called. The feature is dead code. Documented as a
     known limitation; the flags survive for BC but v3 docs no longer advertise it as
     functional.
 
@@ -85,9 +93,10 @@ Each item records where it lives, why it is a problem, and where it is fixed
 12. **`Builder::get()` result attachment no longer works on modern Scout.**
     The override checks `method_exists($models, 'getCollection')`. In Scout ≥ 9
     `Builder::get()` returns an Eloquent collection directly (no `getCollection()`), so
-    the raw Solr result is never attached to the collection — `getFacetSet()`/
-    `getSpellcheckSuggestions()` on the result collection silently return nothing after a
-    plain `get()`. Fixed in the upgrade hop.
+    the raw Solr result is never attached to the collection — and because of issue 3,
+    calling `getFacetSet()`/`getSpellcheckSuggestions()` on a collection returned by
+    `get()` **fatals** (rather than returning nothing). Fixed in the upgrade hop by
+    attaching the result through `SolrCollection`.
 
 13. **Double `->filter()` on the document collection in `update()`.**
     `$documents->filter()` is applied at line 123 *and* again inside
@@ -111,6 +120,53 @@ Each item records where it lives, why it is a problem, and where it is fixed
 16. **`whereRange()` literal mode is an injection foot-gun.** The default placeholder
     mode `L` inserts the low/high values *unescaped* into the filter query. Callers
     dealing with user input should use phrase (`P`) or term (`T`) escaping. Documented.
+
+16a. **Facet keys are engine-suffixed.** Facets attach under keys like
+    `category-field`, `price-query` (and dash-joined pivots), not the bare field
+    names callers declared. Consumers must know the convention. Kept for BC in v3,
+    documented.
+
+16b. **Unity boost is type-sensitive.** `boostField('title', 1)` (int) is reduced to
+    the bare field, but `boostField('title', '1')` (string) renders `title^1` because
+    the reduction check is `!== 1`. Cosmetic; normalized to numeric comparisons in
+    the upgrade hop.
+
+## Issues found building the hop-1 regression suite (Scout 7 baseline) ##
+
+17. **Nested/grouped array queries fatal in the engine.**
+    An array query containing a nested group (`['title' => ['one', 'two']]`) reaches
+    `performSearch()`'s flat-array path, which treats the nested array as a scalar
+    and fatals with *"[] operator not supported for strings"*. Flat numeric/path-keyed
+    arrays work; nested groups do not. Pinned by a characterization test; the upgrade
+    hop either supports grouped arrays recursively or throws a clear exception.
+
+18. **Nested filters lose their grouping parentheses.**
+    A nested closure group is appended to the filter query *without* wrapping
+    parentheses, so `a:1 AND (b:2 OR c:3)` is serialized as `a:1 AND b:2 OR c:3` —
+    operator precedence changes, and results are silently wrong. Pinned by a
+    characterization test; fixed in the upgrade hop by adding a grouped-nested
+    serialization path.
+
+19. **The Scout `Builder` callback is never invoked.**
+    `Searchable::search($query, $callback)` stores the callback on the builder, and
+    Scout's contract is that the engine invokes it before searching (other engines
+    do). `SolrEngine::performSearch()` never calls it, so callers cannot apply
+    last-minute query adjustments. Pinned by a characterization test; the upgrade
+    hop invokes the callback and lets it mutate/return the Solarium query.
+
+20. **Scout ≤ 8's qualified `getScoutKeyName()` breaks `map()`/`orderQuery()`.**
+    Scout 7 returns the *qualified* key name (`books.id`); `collect($results)->pluck('books.id')`
+    uses dot-path `data_get` semantics and cannot read a document field literally
+    named `books.id`, so the ids come back `null` — producing `FIELD(id, ,)` ordering
+    SQL and a `whereIn(id, [null])` fetch. Scout ≥ 9 returns the plain key name, so
+    the upgrade hop resolves this; pinned by a characterization test on the current
+    baseline.
+
+21. **Boosting an array query crashes the builder.**
+    `Builder::selectQueryParser()` runs `strpos($this->query, '*')`, but `$query` can
+    be an array (the engine's flat-array path accepts one); calling `boostField()`
+    on an array query throws a `TypeError`. Pinned by characterization test; fixed
+    in the upgrade hop.
 
 ## Issues found during the upgrade hop (release/v3-php-scout) ##
 

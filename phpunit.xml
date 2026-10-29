@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit bootstrap="tests/bootstrap.php" colors="true" failOnWarning="true">
+    <testsuites>
+        <testsuite name="Unit"><directory>tests/Unit</directory></testsuite>
+        <testsuite name="Regression"><directory>tests/Regression</directory></testsuite>
+    </testsuites>
+    <php>
+        <!-- Legacy dependencies emit PHP 8.x deprecations; errors/warnings still fail. -->
+        <ini name="error_reporting" value="8191"/>
+    </php>
+</phpunit>
