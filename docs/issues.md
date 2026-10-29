@@ -170,7 +170,58 @@ Each item records where it lives, why it is a problem, and where it is fixed
 
 ## Issues found during the upgrade hop (release/v3-php-scout) ##
 
-To be filled in during the upgrade work: Solarium 7 constructor/BC break, Scout 11
-`Engine` contract additions (`lazyMap`, `createIndex`, `deleteIndex`,
-`mapIdsFrom`/`keys`/`get`/`cursor`), wheres-shape migration, soft-delete `__soft_deleted`
-handling, and deprecation of index-time boosts.
+Bugs and BC breaks encountered while moving to PHP 8.5, Laravel Scout 11,
+Solarium 7 and PHPUnit 12. Each of these was found *because of* the upgrade
+and is fixed on the `release/v3-php-scout` branch (the pre-upgrade issues
+above whose text says "fixed in the upgrade hop" are fixed in the same hop).
+
+22. **Solarium 7 requires an adapter and event dispatcher in the constructor.**
+    The config-only constructor `new Client(['endpoint' => ...])` is gone:
+    `Client::__construct(AdapterInterface $adapter, EventDispatcherInterface
+    $eventDispatcher, ?array $options)`. Passing `null` as the adapter now
+    throws a `TypeError` at runtime, not at build time. The provider now
+    picks the `Curl` adapter when ext-curl is loaded (`Http` otherwise),
+    passes a `symfony/event-dispatcher` instance, and supplies the endpoints
+    through the options array.
+
+23. **Solarium 7 CoreAdmin queries never attach the action they create.**
+    `createCreate()`/`createUnload()` return the action object but no longer
+    set it on the query, so `AbstractServerQuery::$action` stays uninitialized
+    and the request builder fatals ("must not be accessed before
+    initialization"). `createIndex()`/`deleteIndex()` now call
+    `$query->setAction(...)` explicitly. Additionally, the CREATE action
+    stores the core name under the `name` option rather than `core`, so the
+    request parameters differ between CREATE and UNLOAD.
+
+24. **Solarium 7 serializes update requests as JSON, not XML.**
+    Update/delete payloads on the wire are now `{"add":{"doc":…}}` and
+    `{"delete":[…]}` bodies; the old `simplexml` assertions in the unit suite
+    fail with a parser error. The tests decode the raw request body with
+    `json_decode` instead.
+
+25. **Scout 11 changed the `Builder` where shape; translation moved to the engine.**
+    Scout's own `where($field, $operator, $value)` and its `whereIns`/
+    `whereNotIns` collections arrive in a different shape than the
+    placeholder-syntax filters this package was built around. `Builder::where()`
+    now detects the Scout-native shape (a non-array `$bindings`, or a `$boolean`
+    that is not `AND`/`OR`) and stores `['field', 'operator', 'value']`, while
+    placeholder calls keep their stage-1 shape. The engine translates both:
+    `compileScoutWhere()` maps operators to Solr ranges/negation and escapes
+    values (phrases when they contain spaces), and `whereIns`/`whereNotIns`
+    become `field:(a OR b)` / `(*:* -field:(a OR b))` filter queries. The
+    soft-delete `__soft_deleted` entry injected by Scout arrives through the
+    same path.
+
+26. **Scout 11's `Engine`/`Builder` contract grew; result attachment had to move.**
+    The engine now implements `lazyMap`, `mapIdsFrom`, `createIndex`,
+    `deleteIndex` and `getTotalCount`, and Scout's `Builder::get()`/
+    `paginate()` route through `engine()->get()`/`paginate()` and map
+    internally. Our `Builder::get()`/`paginate()` overrides now attach the raw
+    Solarium result to the returned `SolrCollection` via
+    `engine()->getLastSelectResult()` (fixing issue 12) instead of poking at
+    paginator internals.
+
+27. **Scout ≥ 9 returns the plain scout key name (issue 20 resolved by the hop).**
+    `getScoutKeyName()` no longer qualifies the key as `books.id`, so
+    `map()`/`orderQuery()` pluck and order on the literal document field.
+    The stage-1 `MapStubModel::getScoutKeyName()` workaround was removed.

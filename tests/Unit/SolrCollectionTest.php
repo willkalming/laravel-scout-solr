@@ -15,6 +15,7 @@ use Solarium\Component\Result\FacetSet as FacetSetResult;
 use Solarium\Component\Result\Spellcheck\Collation;
 use Solarium\Component\Result\Spellcheck\Result as SpellcheckResult;
 use Solarium\Component\Result\Spellcheck\Suggestion;
+use Solarium\Core\Client\Adapter\Http;
 use Solarium\Core\Client\Response as SolariumResponse;
 use Solarium\QueryType\Select\Query\Query as SelectQuery;
 use Solarium\QueryType\Select\Result\Result as SelectResult;
@@ -28,7 +29,9 @@ class SolrCollectionTest extends TestCase
      */
     protected function makeClient(): Client
     {
-        return new Client(null, new EventDispatcher());
+        // Solarium 7 requires an adapter in the constructor; the Http adapter
+        // never connects because we only build query/result objects offline.
+        return new Client(new Http(), new EventDispatcher());
     }
 
     /**

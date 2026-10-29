@@ -208,19 +208,20 @@ class BuilderTest extends TestCase
     }
 
     /**
-     * Characterization: boosts of "" and int 1 are dropped from the qf string,
-     * but string '1' is kept as '^1' because the check uses strict !== 1.
+     * Fixed: all numeric boosts equal to 1 (int, float or numeric string) are
+     * reduced to the bare field; only "", null and non-unity values render ^n.
      */
-    public function testUnityBoostsAreDroppedExceptForTheStringOne()
+    public function testUnityBoostsAreDroppedForAllNumericShapes()
     {
         $builder = $this->makeBuilder('lorem');
 
         $builder
             ->boostField('plain')
             ->boostField('unity', 1)
-            ->boostField('stringy', '1');
+            ->boostField('stringy', '1')
+            ->boostField('floaty', 1.0);
 
-        $this->assertSame('plain unity stringy^1', $builder->getBoosts());
+        $this->assertSame('plain unity stringy floaty', $builder->getBoosts());
         $this->assertTrue($builder->hasBoosts());
     }
 
@@ -253,16 +254,50 @@ class BuilderTest extends TestCase
     }
 
     /**
-     * Characterization of a bug: SolrEngine::performSearch supports array
-     * queries, but selectQueryParser() runs strpos() on the query, so
-     * boosting an array-shaped query currently fatals.
+     * Fixed (issue 21): boosting an array-shaped query no longer crashes the
+     * builder; the parser selection simply skips non-string queries.
      */
-    public function testBoostingAnArrayQueryCurrentlyThrowsATypeError()
+    public function testBoostingAnArrayQuerySelectsDismaxInsteadOfCrashing()
     {
         $builder = $this->makeBuilder(['title' => 'lorem', 'body' => 'ipsum*']);
 
-        $this->expectException(\TypeError::class);
         $builder->boostField('title', 2);
+
+        $this->assertFalse($builder->isEDismax());
+        $this->assertSame(['title' => 'title^2'], $builder->getBoostsArray());
+    }
+
+    /**
+     * Fixed (issue 5): Scout-native where() calls are stored in Scout's where
+     * shape so the engine can translate them.
+     */
+    public function testScoutShapedWheresAreStoredForTranslation()
+    {
+        $builder = $this->makeBuilder();
+
+        $builder->where('category', 'books');
+
+        $this->assertSame(
+            ['field' => 'category', 'operator' => '=', 'value' => 'books'],
+            $builder->wheres[0]
+        );
+
+        $builder->where('price', '>', 10);
+
+        $this->assertSame(
+            ['field' => 'price', 'operator' => '>', 'value' => 10],
+            $builder->wheres[1]
+        );
+    }
+
+    public function testWhereInAndWhereNotInKeepScoutShape()
+    {
+        $builder = $this->makeBuilder();
+
+        $builder->whereIn('category', ['fiction', 'history'])->whereNotIn('state', ['archived']);
+
+        $this->assertSame(['category' => ['fiction', 'history']], $builder->whereIns);
+        $this->assertSame(['state' => ['archived']], $builder->whereNotIns);
     }
 
     public function testUseDismaxAndUseEDismaxAreFluent()
