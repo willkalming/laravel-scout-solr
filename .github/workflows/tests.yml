@@ -1,0 +1,44 @@
+name: Tests
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Unit and regression tests (devenv)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Configure devenv binary cache
+        uses: cachix/cachix-action@v16
+        with:
+          name: devenv
+          skipPush: true
+
+      - name: Install devenv
+        run: nix profile add nixpkgs#devenv
+
+      # This library does not commit composer.lock; resolve its declared constraints.
+      - name: Install Composer dependencies
+        run: devenv shell -- composer update --no-interaction --prefer-dist --no-progress
+
+      # phpunit.xml includes both suites; the fake adapter needs no live Solr.
+      - name: Run test suite
+        run: devenv shell -- composer test

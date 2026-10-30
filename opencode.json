@@ -1,0 +1,13 @@
+{
+  "mcp": {
+    "servers": {
+      "devenv": {
+        "type": "local",
+        "command": [
+          "devenv",
+          "mcp"
+        ]
+      }
+    }
+  }
+}
